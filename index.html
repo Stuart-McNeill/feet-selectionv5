@@ -3,22 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3D Engine v5</title>
+    <title>3D Engine v5 - Pro</title>
     <style>
         body { margin: 0; overflow: hidden; background: #0a0a0c; }
         canvas { display: block; touch-action: none; }
-        /* Ensure no UI from the original webpage shows up */
-        #ui-layer, .panel, .controls, #coords, button { display: none !important; }
+        #ui-layer, button, .panel { display: none !important; }
     </style>
 </head>
 <body>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
     <script>
-        let scene, camera, renderer, leftFoot, rightFoot, currentFoot;
-        let isRotating = false;
+        let scene, camera, renderer, controls, leftFoot, rightFoot, currentFoot;
         let markerGroup = new THREE.Group();
+        const loader = new THREE.GLTFLoader();
 
         const modelUrls = {
             left: "https://stuart-mcneill.github.io/3Dfootselection/Leftfoot.glb",
@@ -31,49 +31,60 @@
             scene.add(markerGroup);
 
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 1.2, 4.5);
+            camera.position.set(0, 1.2, 5);
 
-            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
             document.body.appendChild(renderer.domElement);
 
-            scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-            const sun = new THREE.DirectionalLight(0xffffff, 1);
-            sun.position.set(5, 10, 7);
+            // --- Enhanced Lighting (Fixed Dullness) ---
+            const ambient = new THREE.AmbientLight(0xffffff, 0.8);
+            scene.add(ambient);
+
+            const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+            sun.position.set(5, 10, 7.5);
             scene.add(sun);
 
-            const loader = new THREE.GLTFLoader();
-            
-            // Load Left
-            loader.load(modelUrls.left, (gltf) => {
-                leftFoot = gltf.scene;
-                leftFoot.visible = false;
-                scene.add(leftFoot);
-            });
+            const fillLight = new THREE.PointLight(0x00f2ff, 0.5);
+            fillLight.position.set(-5, 5, -5);
+            scene.add(fillLight);
 
-            // Load Right
-            loader.load(modelUrls.right, (gltf) => {
-                rightFoot = gltf.scene;
-                rightFoot.visible = false;
-                scene.add(rightFoot);
-            });
+            // --- Controls ---
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            // --- Model Loading with Normalization ---
+            const loadModel = (url, side) => {
+                loader.load(url, (gltf) => {
+                    const model = gltf.scene;
+                    
+                    // Normalize Size
+                    const box = new THREE.Box3().setFromObject(model);
+                    const size = box.getSize(new THREE.Vector3()).length();
+                    const scale = 3 / size; // Scale everything to a constant factor
+                    model.scale.set(scale, scale, scale);
+                    
+                    // Center Model
+                    const center = box.getCenter(new THREE.Vector3());
+                    model.position.x += (model.position.x - center.x) * scale;
+                    model.position.y += (model.position.y - center.y) * scale;
+                    model.position.z += (model.position.z - center.z) * scale;
+
+                    model.visible = false;
+                    scene.add(model);
+                    if (side === 'left') leftFoot = model;
+                    else rightFoot = model;
+                });
+            };
+
+            loadModel(modelUrls.left, 'left');
+            loadModel(modelUrls.right, 'right');
 
             animate();
         }
 
-        // --- Region Mapping Logic (Restored) ---
-        function formatRegionName(rawName) {
-            if (!rawName) return "Unknown";
-            // Cleans "Left_foot_-_Heel_01" -> "Heel"
-            return rawName
-                .replace(/Left foot - |Right foot - /gi, "")
-                .replace(/_/g, " ")
-                .replace(/[0-9]/g, "")
-                .trim();
-        }
-
-        // --- App Interface ---
         window.handleMobileCommand = (json) => {
             const data = JSON.parse(json);
             switch(data.action) {
@@ -82,10 +93,11 @@
                     leftFoot.visible = (data.side === 'left');
                     rightFoot.visible = (data.side === 'right');
                     currentFoot = (data.side === 'left') ? leftFoot : rightFoot;
-                    clearMarkers();
+                    // Reset camera on selection
+                    controls.reset();
                     break;
-                case 'ROTATE':
-                    isRotating = !isRotating;
+                case 'RESET_VIEW':
+                    controls.reset();
                     break;
                 case 'UNDO':
                     if (markerGroup.children.length > 0) {
@@ -94,26 +106,21 @@
                     }
                     break;
                 case 'CLEAR':
-                    clearMarkers();
+                    while(markerGroup.children.length > 0) markerGroup.remove(markerGroup.children[0]);
+                    sendUpdate();
                     break;
             }
         };
 
-        function clearMarkers() {
-            while(markerGroup.children.length > 0) markerGroup.remove(markerGroup.children[0]);
-            sendUpdate();
-        }
-
-        function sendUpdate(regionName = "None") {
+        function sendUpdate(region = "None") {
             if (window.ReactNativeWebView) {
                 window.ReactNativeWebView.postMessage(JSON.stringify({
                     count: markerGroup.children.length,
-                    region: regionName
+                    region: region
                 }));
             }
         }
 
-        // --- Interaction ---
         window.addEventListener('click', (e) => {
             if (!currentFoot) return;
             const mouse = new THREE.Vector2(
@@ -133,25 +140,16 @@
                 marker.position.copy(hit.point);
                 markerGroup.add(marker);
                 
-                const cleanName = formatRegionName(hit.object.name);
-                sendUpdate(cleanName);
+                let name = hit.object.name.replace(/Left foot - |Right foot - |_/gi, " ").trim();
+                sendUpdate(name || "Surface");
             }
         });
 
         function animate() {
             requestAnimationFrame(animate);
-            if (isRotating && currentFoot) {
-                currentFoot.rotation.y += 0.01;
-                markerGroup.rotation.y += 0.01;
-            }
+            controls.update();
             renderer.render(scene, camera);
         }
-
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
 
         init();
     </script>

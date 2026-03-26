@@ -7,8 +7,7 @@
     <style>
         body { margin: 0; overflow: hidden; background: #0a0a0c; }
         canvas { display: block; touch-action: none; }
-        /* Hide original V4 UI elements so Expo can take over */
-        #ui-layer, .panel, .controls, #coords, #loading { display: none !important; }
+        #ui-layer, .panel, .controls, #coords { display: none !important; }
     </style>
 </head>
 <body>
@@ -18,10 +17,9 @@
 
     <script>
         let scene, camera, renderer, controls, leftFoot, rightFoot, currentFoot;
+        let interactionMode = 'rotate'; // 'rotate' or 'mark'
         let markerGroup = new THREE.Group();
-        const loader = new THREE.GLTFLoader();
 
-        // Exact URLs from your V4
         const urls = {
             left: "https://stuart-mcneill.github.io/3Dfootselection/Leftfoot.glb",
             right: "https://stuart-mcneill.github.io/feet-selection/RightFoot.glb"
@@ -32,62 +30,47 @@
             scene.background = new THREE.Color(0x0a0a0c);
             scene.add(markerGroup);
 
-            // V4 Camera View
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
             camera.position.set(0, 1.5, 4);
 
-            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+            renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
             document.body.appendChild(renderer.domElement);
 
-            // V4 Lighting Setup
-            const ambient = new THREE.AmbientLight(0xffffff, 0.6);
-            scene.add(ambient);
-            const directional = new THREE.DirectionalLight(0xffffff, 1);
-            directional.position.set(5, 10, 7.5);
-            scene.add(directional);
+            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+            const sun = new THREE.DirectionalLight(0xffffff, 1);
+            sun.position.set(5, 10, 7.5);
+            scene.add(sun);
 
-            // OrbitControls for Rotation/Zoom
             controls = new THREE.OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
-            controls.dampingFactor = 0.05;
 
-            // Load Models with V4 scaling
-            loader.load(urls.left, (gltf) => {
-                leftFoot = gltf.scene;
-                leftFoot.visible = false;
-                scene.add(leftFoot);
-            });
-
-            loader.load(urls.right, (gltf) => {
-                rightFoot = gltf.scene;
-                rightFoot.visible = false;
-                scene.add(rightFoot);
-            });
+            const loader = new THREE.GLTFLoader();
+            loader.load(urls.left, (g) => { leftFoot = g.scene; leftFoot.visible = false; scene.add(leftFoot); });
+            loader.load(urls.right, (g) => { rightFoot = g.scene; rightFoot.visible = false; scene.add(rightFoot); });
 
             animate();
         }
 
         window.handleMobileCommand = (json) => {
             const data = JSON.parse(json);
-            switch(data.action) {
-                case 'SELECT':
-                    if (!leftFoot || !rightFoot) return;
-                    leftFoot.visible = (data.side === 'left');
-                    rightFoot.visible = (data.side === 'right');
-                    currentFoot = (data.side === 'left') ? leftFoot : rightFoot;
-                    break;
-                case 'UNDO':
-                    if (markerGroup.children.length > 0) {
-                        markerGroup.remove(markerGroup.children[markerGroup.children.length - 1]);
-                        sendUpdate();
-                    }
-                    break;
-                case 'CLEAR':
-                    while(markerGroup.children.length > 0) markerGroup.remove(markerGroup.children[0]);
-                    sendUpdate();
-                    break;
+            if (data.action === 'SELECT') {
+                leftFoot.visible = (data.side === 'left');
+                rightFoot.visible = (data.side === 'right');
+                currentFoot = (data.side === 'left') ? leftFoot : rightFoot;
+            }
+            if (data.action === 'SET_MODE') {
+                interactionMode = data.mode;
+                controls.enabled = (data.mode === 'rotate');
+            }
+            if (data.action === 'UNDO') {
+                markerGroup.remove(markerGroup.children[markerGroup.children.length-1]);
+                sendUpdate();
+            }
+            if (data.action === 'CLEAR') {
+                while(markerGroup.children.length > 0) markerGroup.remove(markerGroup.children[0]);
+                sendUpdate();
             }
         };
 
@@ -100,28 +83,16 @@
             }
         }
 
-        // Improved Interaction for Mobile (Prevents marking while rotating)
-        let isDragging = false;
-        window.addEventListener('touchstart', () => isDragging = false);
-        window.addEventListener('touchmove', () => isDragging = true);
-        window.addEventListener('touchend', (e) => {
-            if (isDragging || !currentFoot) return;
+        window.addEventListener('pointerup', (e) => {
+            if (interactionMode !== 'mark' || !currentFoot) return;
             
-            const touch = e.changedTouches[0];
-            const mouse = new THREE.Vector2(
-                (touch.clientX / window.innerWidth) * 2 - 1,
-                -(touch.clientY / window.innerHeight) * 2 + 1
-            );
-
+            const mouse = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
             const raycaster = new THREE.Raycaster();
             raycaster.setFromCamera(mouse, camera);
             const hits = raycaster.intersectObject(currentFoot, true);
 
             if (hits.length > 0) {
-                const marker = new THREE.Mesh(
-                    new THREE.SphereGeometry(0.04), // V4 Marker Size
-                    new THREE.MeshBasicMaterial({ color: 0x00f2ff })
-                );
+                const marker = new THREE.Mesh(new THREE.SphereGeometry(0.05), new THREE.MeshBasicMaterial({ color: 0x00f2ff }));
                 marker.position.copy(hits[0].point);
                 markerGroup.add(marker);
                 

@@ -5,129 +5,156 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>3D Foot Engine</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #f0f0f0; font-family: sans-serif; }
-        canvas { display: block; }
-        #status { position: absolute; top: 10; left: 10; font-size: 12px; color: #666; pointer-events: none; }
+        body { margin: 0; overflow: hidden; background: #0a0a0c; }
+        canvas { display: block; touch-action: none; }
+        /* Hide all original UI elements */
+        #ui-layer, .panel, .controls, #coords { display: none !important; }
     </style>
 </head>
 <body>
-    <div id="status">Engine Ready</div>
-    <script type="importmap">
-        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
-    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 
-    <script type="module">
-        import * as THREE from 'three';
+    <script>
+        let scene, camera, renderer, leftFoot, rightFoot, currentFootModel;
+        let rotationEnabled = false;
+        let markerGroup = new THREE.Group();
+        let markerLogs = [];
 
-        // --- Setup Scene ---
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0xf0f0f0);
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement);
+        // --- Initialization ---
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0a0a0c);
+            scene.add(markerGroup);
 
-        const light = new THREE.DirectionalLight(0xffffff, 1);
-        light.position.set(5, 5, 5).優化;
-        scene.add(light, new THREE.AmbientLight(0x404040));
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 1.5, 4);
 
-        camera.position.z = 5;
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
 
-        // --- Mock Foot Models (Replace with your GLTF loader) ---
-        const leftFoot = new THREE.Mesh(new THREE.BoxGeometry(1, 0.5, 2), new THREE.MeshPhongMaterial({ color: 0x00ff00 }));
-        leftFoot.position.x = -1.5;
-        scene.add(leftFoot);
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+            directionalLight.position.set(5, 10, 7.5);
+            scene.add(directionalLight);
 
-        const rightFoot = new THREE.Mesh(new THREE.BoxGeometry(1, 0.5, 2), new THREE.MeshPhongMaterial({ color: 0x0000ff }));
-        rightFoot.position.x = 1.5;
-        scene.add(rightFoot);
-
-        let selectedFoot = null;
-        let isRotating = false;
-        let marks = [];
-
-        // --- Communication Bridge ---
-        window.handleMobileCommand = (command) => {
-            const data = typeof command === 'string' ? JSON.parse(command) : command;
+            const loader = new THREE.GLTFLoader();
+            // Using absolute paths to ensure assets load regardless of where HTML is hosted
+            const baseUrl = "https://stuart-mcneill.github.io/feet-selectionv4/assets/models/";
             
-            switch(data.action) {
-                case 'SELECT_LEFT':
-                    selectedFoot = leftFoot;
-                    updateHighlight();
+            loader.load(baseUrl + 'left_foot.glb', (gltf) => {
+                leftFoot = gltf.scene;
+                leftFoot.visible = false;
+                scene.add(leftFoot);
+            });
+
+            loader.load(baseUrl + 'right_foot.glb', (gltf) => {
+                rightFoot = gltf.scene;
+                rightFoot.visible = false;
+                scene.add(rightFoot);
+            });
+
+            animate();
+        }
+
+        // --- Bridge Commands (Called by Expo) ---
+        window.handleMobileCommand = (dataString) => {
+            const data = JSON.parse(dataString);
+            
+            switch(data.command) {
+                case 'SELECT_SIDE':
+                    selectFoot(data.value);
                     break;
-                case 'SELECT_RIGHT':
-                    selectedFoot = rightFoot;
-                    updateHighlight();
-                    break;
-                case 'ROTATE':
-                    isRotating = !isRotating;
+                case 'TOGGLE_ROTATION':
+                    rotationEnabled = !rotationEnabled;
                     break;
                 case 'UNDO':
-                    if(marks.length > 0) {
-                        const lastMark = marks.pop();
-                        scene.remove(lastMark);
-                        notifyApp("UNDO", { remaining: marks.length });
-                    }
+                    undoLastMarker();
                     break;
                 case 'CLEAR':
-                    marks.forEach(m => scene.remove(m));
-                    marks = [];
-                    notifyApp("CLEAR", {});
+                    clearMarkers();
                     break;
             }
         };
 
-        function updateHighlight() {
-            leftFoot.material.emissive.setHex(selectedFoot === leftFoot ? 0x333333 : 0x000000);
-            rightFoot.material.emissive.setHex(selectedFoot === rightFoot ? 0x333333 : 0x000000);
+        function selectFoot(side) {
+            if (!leftFoot || !rightFoot) return;
+            leftFoot.visible = (side === 'left');
+            rightFoot.visible = (side === 'right');
+            currentFootModel = (side === 'left') ? leftFoot : rightFoot;
+            clearMarkers(); // Auto-clear when switching feet
         }
 
-        function notifyApp(type, payload) {
-            if (window.ReactNativeWebView) {
-                window.ReactNativeWebView.postMessage(JSON.stringify({ type, payload }));
+        function undoLastMarker() {
+            if (markerGroup.children.length > 0) {
+                markerGroup.remove(markerGroup.children[markerGroup.children.length - 1]);
+                markerLogs.pop();
+                notifyApp();
             }
         }
 
-        // --- Mark Logic (Raycasting) ---
-        window.addEventListener('click', (event) => {
-            if (!selectedFoot) return;
+        function clearMarkers() {
+            while(markerGroup.children.length > 0) {
+                markerGroup.remove(markerGroup.children[0]);
+            }
+            markerLogs = [];
+            notifyApp();
+        }
 
+        function notifyApp() {
+            if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'STATE_UPDATE',
+                    markerCount: markerLogs.length
+                }));
+            }
+        }
+
+        // --- Interaction Logic ---
+        window.addEventListener('click', (event) => {
+            if (!currentFootModel) return;
+
+            const raycaster = new THREE.Raycaster();
             const mouse = new THREE.Vector2(
                 (event.clientX / window.innerWidth) * 2 - 1,
                 -(event.clientY / window.innerHeight) * 2 + 1
             );
 
-            const raycaster = new THREE.Raycaster();
             raycaster.setFromCamera(mouse, camera);
-            const intersects = raycaster.intersectObject(selectedFoot);
+            const intersects = raycaster.intersectObject(currentFootModel, true);
 
             if (intersects.length > 0) {
-                const dot = new THREE.Mesh(
-                    new THREE.SphereGeometry(0.1),
-                    new THREE.MeshBasicMaterial({ color: 0xff0000 })
+                const point = intersects[0].point;
+                const marker = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.05),
+                    new THREE.MeshBasicMaterial({ color: 0x00f2ff })
                 );
-                dot.position.copy(intersects[0].point);
-                scene.add(dot);
-                marks.push(dot);
-                
-                notifyApp("MARK_ADDED", { x: dot.position.x, y: dot.position.y });
+                marker.position.copy(point);
+                markerGroup.add(marker);
+                markerLogs.push(point);
+                notifyApp();
             }
         });
 
         function animate() {
             requestAnimationFrame(animate);
-            if (isRotating && selectedFoot) {
-                selectedFoot.rotation.y += 0.02;
+            if (rotationEnabled && currentFootModel) {
+                currentFootModel.rotation.y += 0.01;
+                markerGroup.rotation.y += 0.01;
             }
             renderer.render(scene, camera);
         }
-        animate();
 
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
+
+        init();
     </script>
 </body>
 </html>

@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3D Foot Analysis</title>
     <style>
+        /* Hide the control panel so the Expo App can take over */
+        #ui-layer { display: none !important; }
         :root {
             --primary: #00f2ff;
             --bg: #0a0a0c;
@@ -98,6 +100,43 @@
 
         /* Hide Scrollbars */
         ::-webkit-scrollbar { display: none; }
+        // Change marker size and color for the mobile version
+const originalAddMarker = addMarker;
+addMarker = function(pos, region) {
+    if (interactionMode === 'mark') {
+        const marker = new THREE.Mesh(
+            new THREE.SphereGeometry(0.02), // Smaller size
+            new THREE.MeshBasicMaterial({ color: 0xff0000 }) // Red color
+        );
+        marker.position.copy(pos);
+        markerGroup.add(marker);
+        
+        markerLogs.push({ region, x: pos.x.toFixed(3), y: pos.y.toFixed(3), z: pos.z.toFixed(3) });
+        // Send data back to Expo
+        if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+                count: markerGroup.children.length,
+                region: region.replace(/Left foot - |Right foot - /g, "")
+            }));
+        }
+    }
+};
+
+// Listen for commands from Expo Snack
+let interactionMode = 'rotate'; 
+window.handleMobileCommand = (json) => {
+    const data = JSON.parse(json);
+    if (data.action === 'SELECT') switchModel(data.side);
+    if (data.action === 'UNDO') undoLastMarker();
+    if (data.action === 'CLEAR') {
+        while(markerGroup.children.length > 0) markerGroup.remove(markerGroup.children[0]);
+        markerLogs = [];
+    }
+    if (data.action === 'SET_MODE') {
+        interactionMode = data.mode;
+        controls.enabled = (data.mode === 'rotate'); // Lock rotation when marking
+    }
+};
     </style>
 </head>
 <body>

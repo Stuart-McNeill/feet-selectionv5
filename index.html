@@ -5,22 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3D Foot Analysis</title>
     <style>
-        /* Hide the control panel so the Expo App can take over */
-        #ui-layer { display: none !important; }
-        :root {
-            --primary: #00f2ff;
-            --bg: #0a0a0c;
-            --panel-bg: rgba(25, 25, 30, 0.8);
-            --border: rgba(255, 255, 255, 0.1);
-        }
+        /* 1. HIDE THE WEB UI SO THE EXPO APP TAKES OVER */
+    #ui-layer { display: none !important; }
 
-        body { 
-            margin: 0; 
-            overflow: hidden; 
-            font-family: 'Inter', -apple-system, sans-serif; 
-            background: var(--bg); 
-            color: white; 
-        }
+    :root {
+        --primary: #00f2ff;
+        --bg: #0a0a0c;
+        --panel-bg: rgba(25, 25, 30, 0.8);
+        --border: rgba(255, 255, 255, 0.1);
+    }
+
+    body { 
+        margin: 0; 
+        overflow: hidden; 
+        font-family: 'Inter', -apple-system, sans-serif; 
+        background: var(--bg); 
+        color: white; 
+    }
 
         /* Modern Glass UI */
         #ui-layer { 
@@ -100,19 +101,27 @@
 
         /* Hide Scrollbars */
         ::-webkit-scrollbar { display: none; }
-        // Change marker size and color for the mobile version
+        // --- MOBILE BRIDGE START ---
+let interactionMode = 'rotate'; 
+
+// Override your existing addMarker function for mobile
 const originalAddMarker = addMarker;
 addMarker = function(pos, region) {
+    // Only place a marker if the user has selected "MARK MODE" in Expo
     if (interactionMode === 'mark') {
         const marker = new THREE.Mesh(
-            new THREE.SphereGeometry(0.02), // Smaller size
-            new THREE.MeshBasicMaterial({ color: 0xff0000 }) // Red color
+            new THREE.SphereGeometry(0.02), // Small Red Mark
+            new THREE.MeshBasicMaterial({ color: 0xff0000 }) 
         );
         marker.position.copy(pos);
         markerGroup.add(marker);
         
         markerLogs.push({ region, x: pos.x.toFixed(3), y: pos.y.toFixed(3), z: pos.z.toFixed(3) });
-        // Send data back to Expo
+        
+        // Update the coordinates text on the web (even if hidden)
+        document.getElementById("coords").textContent = region.replace(/Left foot - |Right foot - /g, "");
+
+        // Send the update back to the Expo Snack UI
         if (window.ReactNativeWebView) {
             window.ReactNativeWebView.postMessage(JSON.stringify({
                 count: markerGroup.children.length,
@@ -122,21 +131,33 @@ addMarker = function(pos, region) {
     }
 };
 
-// Listen for commands from Expo Snack
-let interactionMode = 'rotate'; 
+// This function receives the "Orders" from your Expo Snack buttons
 window.handleMobileCommand = (json) => {
     const data = JSON.parse(json);
-    if (data.action === 'SELECT') switchModel(data.side);
-    if (data.action === 'UNDO') undoLastMarker();
+    
+    if (data.action === 'SELECT') {
+        switchModel(data.side); // Calls your existing V4 function
+    }
+    
+    if (data.action === 'UNDO') {
+        undoLastMarker(); // Calls your existing V4 function
+    }
+    
     if (data.action === 'CLEAR') {
         while(markerGroup.children.length > 0) markerGroup.remove(markerGroup.children[0]);
         markerLogs = [];
+        if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({ count: 0, region: "CLEARED" }));
+        }
     }
+    
     if (data.action === 'SET_MODE') {
         interactionMode = data.mode;
-        controls.enabled = (data.mode === 'rotate'); // Lock rotation when marking
+        // Disable rotation when in "Marking" mode to prevent accidental spinning
+        controls.enabled = (data.mode === 'rotate'); 
     }
 };
+// --- MOBILE BRIDGE END ---
     </style>
 </head>
 <body>

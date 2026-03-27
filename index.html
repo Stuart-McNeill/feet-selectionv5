@@ -20,7 +20,7 @@
             color: white; 
         }
 
-        /* Hides the web UI so only the 3D model shows in the App */
+        /* Hides the web UI so only the 3D model shows in the Expo App */
         #ui-layer { display: none !important; }
 
         #status { font-family: monospace; font-size: 10px; color: #555; margin-top: 10px; text-transform: uppercase; }
@@ -51,9 +51,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-// ==========================================
-// PASTE YOUR DATA ARRAY DIRECTLY BELOW
-// ==========================================
+// --- PASTE YOUR FULL PRESET_REGIONS ARRAY HERE ---
 const PRESET_REGIONS = [
   // --- LEFT FOOT ---
   { name: "Left foot - Dorsal Hallux Toenail", pos: [-0.11115, 0.098, 0.465], rot: [0, 0.01, 0], scale: [0.05, 0.015, 0.05] },
@@ -282,123 +280,171 @@ const PRESET_REGIONS = [
   { name: "Right foot - Posterior Leg", pos: [0.02028, 0.50000, -0.42240], rot: [0.00000, 0.00000, 0.00000], scale: [0.25430, 0.43112, 0.12119] }
 ];
 
-// ==========================================
-// PASTE YOUR DATA ARRAY DIRECTLY ABOVE
-// ==========================================
-
-// --- MODEL SOURCE PATHS ---
 const urls = {
     left: "https://stuart-mcneill.github.io/3Dfootselection/Leftfoot.glb",
     right: "https://stuart-mcneill.github.io/feet-selection/RightFoot.glb"
 };
 
-// --- CORE ENGINE (V4 SETTINGS) ---
-let currentFoot = 'left';
-let currentModel = null;
-let interactionMode = 'rotate'; 
+let scene, camera, renderer, controls;
+let raycaster = new THREE.Raycaster();
+let mouse = new THREE.Vector2();
+
+let currentFoot = "right";
+let footGroup = new THREE.Group();
+let markerGroup = new THREE.Group();
+let regionGroup = new THREE.Group(); 
+
+let isLoaded = false;
+let mode = "rotate"; 
 let markerLogs = [];
 
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0a0c);
+init();
 
-const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(0.5, 0.5, 1.2);
+function init() {
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0a0c);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-document.body.appendChild(renderer.domElement);
+    camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 100);
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    document.body.appendChild(renderer.domElement);
 
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
 
-const markerGroup = new THREE.Group();
-scene.add(markerGroup);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x222222, 3.0));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.0);
+    sun.position.set(5, 5, 5);
+    scene.add(sun);
 
-const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
-scene.add(ambientLight);
+    scene.add(footGroup);
+    scene.add(markerGroup);
+    
+    regionGroup.visible = false; 
+    scene.add(regionGroup);
 
-const pointLight = new THREE.PointLight(0xffffff, 2);
-pointLight.position.set(5, 5, 5);
-scene.add(pointLight);
+    PRESET_REGIONS.forEach(data => addRegion(data.name, data.pos, data.rot, data.scale));
 
-const loader = new GLTFLoader();
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
+    window.addEventListener("resize", onResize);
+    renderer.domElement.addEventListener("mousedown", onMouseDown);
+    renderer.domElement.addEventListener("touchstart", (e) => {
+        onMouseDown(e.touches[0]);
+    });
+    
+    loadFoot();
+    animate();
+}
 
-function addMarker(pos, region) {
-    if (interactionMode === 'mark') {
-        const marker = new THREE.Mesh(
-            new THREE.SphereGeometry(0.02),
-            new THREE.MeshBasicMaterial({ color: 0xff0000 }) 
-        );
-        marker.position.copy(pos);
-        markerGroup.add(marker);
+function loadFoot() {
+    isLoaded = false;
+    document.getElementById("status").textContent = "Synchronizing...";
+    footGroup.clear();
+    markerGroup.clear();
+    markerLogs = [];
+
+    new GLTFLoader().load(urls[currentFoot], (gltf) => {
+        const model = gltf.scene;
+        model.traverse(c => { 
+            if(c.isMesh) {
+                c.material = new THREE.MeshStandardMaterial({ 
+                    color: 0xcccccc, 
+                    roughness: 0.4, 
+                    metalness: 0.2 
+                }); 
+            }
+        });
         
-        markerLogs.push({ region, x: pos.x.toFixed(3), y: pos.y.toFixed(3), z: pos.z.toFixed(3) });
+        const box = new THREE.Box3().setFromObject(model);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+
+        model.position.x = -center.x;
+        model.position.y = -box.min.y; 
+        model.position.z = -center.z;
+
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const scaleFactor = 1.0 / maxDim;
+        model.scale.setScalar(scaleFactor);
+        model.position.multiplyScalar(scaleFactor);
+
+        footGroup.add(model);
+        camera.position.set(0, 1.2, 2.5);
+        controls.target.set(0, 0.4, 0);
+        
+        document.getElementById("status").textContent = "System Active";
+        isLoaded = true;
+    });
+}
+
+function setMode(m) {
+    mode = m;
+    controls.enableRotate = (mode === "rotate");
+}
+
+function addRegion(name, pos, rot, scale) {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+    mesh.position.set(...pos);
+    mesh.rotation.set(...rot);
+    mesh.scale.set(...scale);
+    mesh.userData.name = name;
+    regionGroup.add(mesh);
+}
+
+function onMouseDown(e) {
+    if (!isLoaded || mode !== "draw") return;
+    
+    const rect = renderer.domElement.getBoundingClientRect();
+    mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    
+    raycaster.setFromCamera(mouse, camera);
+
+    const hits = raycaster.intersectObjects(footGroup.children, true);
+    if (hits.length > 0) {
+        const pos = hits[0].point;
+        let region = "External Surface";
+        
+        regionGroup.children.forEach(box => {
+            const side = currentFoot === "left" ? "Left foot" : "Right foot";
+            if (!box.userData.name.includes(side)) return;
+
+            const localPoint = pos.clone().applyMatrix4(box.matrixWorld.clone().invert());
+            if (Math.abs(localPoint.x) < 0.5 && Math.abs(localPoint.y) < 0.5 && Math.abs(localPoint.z) < 0.5) {
+                region = box.userData.name;
+            }
+        });
+
+        const dot = new THREE.Mesh(
+            new THREE.SphereGeometry(0.008), 
+            new THREE.MeshBasicMaterial({ color: 0xff4400 })
+        );
+        dot.position.copy(pos);
+        markerGroup.add(dot);
         
         const cleanName = region.replace(/Left foot - |Right foot - /g, "");
+        markerLogs.push({ region, x: pos.x.toFixed(3), y: pos.y.toFixed(3), z: pos.z.toFixed(3) });
         document.getElementById("coords").textContent = cleanName;
 
-        // Communicate back to Mobile App
+        // EXPO BRIDGE: Send region to Mobile App
         if (window.ReactNativeWebView) {
             window.ReactNativeWebView.postMessage(JSON.stringify({
-                count: markerGroup.children.length,
-                region: cleanName
+                action: 'MARKER_ADDED',
+                region: cleanName,
+                count: markerGroup.children.length
             }));
         }
     }
 }
 
-function switchModel(side) {
-    currentFoot = side;
-    const modelPath = urls[side];
-
-    if (currentModel) scene.remove(currentModel);
-    while(markerGroup.children.length > 0) markerGroup.remove(markerGroup.children[0]);
-    markerLogs = [];
-    document.getElementById("coords").textContent = "Region: None";
-
-    loader.load(modelPath, (gltf) => {
-        currentModel = gltf.scene;
-        scene.add(currentModel);
-        
-        // Use your data array to create hidden hit-boxes
-        PRESET_REGIONS.filter(r => r.name.toLowerCase().includes(side)).forEach(data => {
-            const box = new THREE.Mesh(
-                new THREE.BoxGeometry(1, 1, 1),
-                new THREE.MeshBasicMaterial({ visible: false })
-            );
-            box.position.set(...data.pos);
-            box.rotation.set(...data.rot);
-            box.scale.set(...data.scale);
-            box.userData = { regionName: data.name };
-            currentModel.add(box);
-        });
-    });
-}
-
-function onTouch(event) {
-    if (interactionMode !== 'mark') return;
-    const clientX = event.touches ? event.touches[0].clientX : event.clientX;
-    const clientY = event.touches ? event.touches[0].clientY : event.clientY;
-    
-    mouse.x = (clientX / window.innerWidth) * 2 - 1;
-    mouse.y = -(clientY / window.innerHeight) * 2 + 1;
-
-    raycaster.setFromCamera(mouse, camera);
-    const intersects = raycaster.intersectObjects(currentModel.children, true);
-    
-    if (intersects.length > 0) {
-        const hit = intersects.find(i => i.object.userData.regionName);
-        if (hit) addMarker(hit.point, hit.object.userData.regionName);
-    }
-}
-
-// --- EXPO BRIDGE COMMANDS (FOR MOBILE BUTTONS) ---
+// --- EXPO BRIDGE: Incoming Commands ---
 window.handleMobileCommand = (json) => {
     const data = JSON.parse(json);
-    if (data.action === 'SELECT') switchModel(data.side);
+    if (data.action === 'SELECT') { currentFoot = data.side; loadFoot(); }
+    if (data.action === 'SET_MODE') setMode(data.mode);
     if (data.action === 'UNDO') {
         if (markerGroup.children.length > 0) {
             markerGroup.remove(markerGroup.children[markerGroup.children.length - 1]);
@@ -406,32 +452,22 @@ window.handleMobileCommand = (json) => {
         }
     }
     if (data.action === 'CLEAR') {
-        while(markerGroup.children.length > 0) markerGroup.remove(markerGroup.children[0]);
+        markerGroup.clear();
         markerLogs = [];
-        if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({ count: 0, region: "CLEARED" }));
-    }
-    if (data.action === 'SET_MODE') {
-        interactionMode = data.mode;
-        controls.enabled = (data.mode === 'rotate');
     }
 };
 
-window.addEventListener('mousedown', onTouch);
-window.addEventListener('touchstart', onTouch);
-window.addEventListener('resize', () => {
+function onResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
-});
+}
 
 function animate() {
     requestAnimationFrame(animate);
     controls.update();
     renderer.render(scene, camera);
 }
-
-switchModel('left');
-animate();
 </script>
 </body>
 </html>

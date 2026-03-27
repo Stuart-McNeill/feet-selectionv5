@@ -53,8 +53,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-// --- MOBILE STATE ---
+// --- MOBILE INTERACTION STATE ---
 let interactionMode = 'rotate'; 
+
+// ==========================================
+// START: PASTE YOUR DATA ARRAY BELOW
+// ==========================================
 
 // --- PASTE YOUR FULL PRESET_REGIONS ARRAY HERE ---
 const PRESET_REGIONS = [
@@ -284,11 +288,19 @@ const PRESET_REGIONS = [
   { name: "Right foot - Plantar Central Band Fascia", pos: [0.00000, 0.03738, -0.22424], rot: [0.03827, -0.00121, 0.00191], scale: [0.10000, 0.10000, 0.10000] },
   { name: "Right foot - Posterior Leg", pos: [0.02028, 0.50000, -0.42240], rot: [0.00000, 0.00000, 0.00000], scale: [0.25430, 0.43112, 0.12119] }
 ];
+
+// ==========================================
+// END: PASTE YOUR DATA ARRAY ABOVE
+// ==========================================
+
+
+// --- MODEL SOURCE PATHS ---
 const urls = {
     left: "https://stuart-mcneill.github.io/3Dfootselection/Leftfoot.glb",
     right: "https://stuart-mcneill.github.io/feet-selection/RightFoot.glb"
 };
-// --- CORE SYSTEM ---
+
+// --- CORE ENGINE ---
 let currentFoot = 'left';
 let currentModel = null;
 let markerLogs = [];
@@ -322,7 +334,7 @@ const mouse = new THREE.Vector2();
 function addMarker(pos, region) {
     if (interactionMode === 'mark') {
         const marker = new THREE.Mesh(
-            new THREE.SphereGeometry(0.02), // Red Dot
+            new THREE.SphereGeometry(0.02),
             new THREE.MeshBasicMaterial({ color: 0xff0000 }) 
         );
         marker.position.copy(pos);
@@ -330,14 +342,14 @@ function addMarker(pos, region) {
         
         markerLogs.push({ region, x: pos.x.toFixed(3), y: pos.y.toFixed(3), z: pos.z.toFixed(3) });
         
-        const cleanRegionName = region.replace(/Left foot - |Right foot - /g, "");
-        document.getElementById("coords").textContent = cleanRegionName;
+        const cleanName = region.replace(/Left foot - |Right foot - /g, "");
+        document.getElementById("coords").textContent = cleanName;
 
-        // Bridge to Expo App
+        // Bridge to Expo Snack
         if (window.ReactNativeWebView) {
             window.ReactNativeWebView.postMessage(JSON.stringify({
                 count: markerGroup.children.length,
-                region: cleanRegionName
+                region: cleanName
             }));
         }
     }
@@ -345,11 +357,7 @@ function addMarker(pos, region) {
 
 function switchModel(side) {
     currentFoot = side;
-    
-    // --- YOUR GITHUB PATHS RESTORED HERE ---
-    const modelPath = side === 'left' 
-        ? 'https://raw.githubusercontent.com/msh76/Foot/main/left_foot_centered.glb' 
-        : 'https://raw.githubusercontent.com/msh76/Foot/main/right_foot_centered.glb';
+    const modelPath = urls[side];
 
     if (currentModel) scene.remove(currentModel);
     while(markerGroup.children.length > 0) markerGroup.remove(markerGroup.children[0]);
@@ -360,7 +368,7 @@ function switchModel(side) {
         currentModel = gltf.scene;
         scene.add(currentModel);
         
-        // Setup collision boxes
+        // Setup collision boxes from your array
         PRESET_REGIONS.filter(r => r.name.toLowerCase().includes(side)).forEach(data => {
             const box = new THREE.Mesh(
                 new THREE.BoxGeometry(1, 1, 1),
@@ -392,7 +400,7 @@ function onTouch(event) {
     }
 }
 
-// --- MOBILE COMMAND RECEIVER ---
+// --- EXPO BRIDGE COMMANDS ---
 window.handleMobileCommand = (json) => {
     const data = JSON.parse(json);
     if (data.action === 'SELECT') switchModel(data.side);
